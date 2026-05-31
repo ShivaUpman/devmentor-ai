@@ -378,5 +378,3 @@ docker compose exec backend alembic upgrade head
 This project is licensed under the MIT License.
 
 ---
-
-Built to help developers practice interviews, identify skill gaps, and follow structured learning paths through adaptive assessment and AI-generated feedback.
