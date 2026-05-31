@@ -322,7 +322,7 @@ make dev
 ### Production Deployment
 
 ```bash
-git clone https://github.com/<your-username>/devmentor-ai.git
+git clone https://github.com/ShivaUpman/devmentor-ai.git
 
 cd devmentor-ai
 
