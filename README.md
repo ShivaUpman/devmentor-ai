@@ -1,212 +1,179 @@
 # DevMentor AI
 
-**Production-grade AI-powered developer coaching platform.**
+Adaptive AI-powered developer interview platform that evaluates technical answers, identifies skill gaps, and generates personalized learning roadmaps.
 
-Practice technical interviews, receive semantic AI scoring, detect skill gaps, and follow a personalized learning roadmap — all running locally on CPU with no paid cloud infrastructure required beyond a free Groq API key.
+Built with FastAPI, Next.js, PostgreSQL, Redis, Sentence Transformers, and Groq.
 
 ---
+
+## Features
+
+### Adaptive Technical Interviews
+
+* Dynamically adjusts question difficulty based on candidate performance
+* Prioritizes weak skill areas for targeted improvement
+* Prevents repeated questions within a session
+* Tracks skill progression across interview attempts
+
+### AI-Powered Evaluation
+
+* Semantic answer scoring using Sentence Transformers
+* Confidence and quality assessment
+* Personalized coaching feedback
+* Skill-level tracking by topic
+
+### Personalized Learning Roadmaps
+
+* Identifies knowledge gaps
+* Recommends curated learning resources
+* Generates personalized improvement paths
+* Tracks completed learning milestones
+
+### AI Code Review
+
+* Automated code review assistance
+* Quality and improvement suggestions
+* Feedback tailored to developer skill level
+
+---
+
+## Screenshots
+
+### Dashboard
+<img width="958" height="443" alt="{47A80D36-A5C9-4DC8-99FD-E6A534C80C8E}" src="https://github.com/user-attachments/assets/172f29df-3110-407f-b334-28107c27e1c4" />
+
+### Adaptive Interview
+<img width="953" height="442" alt="{2B13D935-6750-4A40-83CA-88822358B648}" src="https://github.com/user-attachments/assets/cf849b16-4fbf-4883-93d8-3c98228e7edf" />
+
+### Learning Roadmap
+<img width="952" height="441" alt="{59891FB8-207E-43CB-AC29-868FF0957543}" src="https://github.com/user-attachments/assets/40f44706-3fb0-4ba4-8679-c7dfde2146f3" />
+
+
+
 
 ## Architecture
 
+```text
+                   ┌─────────────┐
+                   │   Nginx     │
+                   │Reverse Proxy│
+                   └──────┬──────┘
+                          │
+          ┌───────────────┼───────────────┐
+          │                               │
+          ▼                               ▼
+    Next.js Frontend               FastAPI Backend
+        (3000)                          (8000)
+                                           │
+                  ┌────────────────────────┼───────────────────────┐
+                  │                        │                       │
+                  ▼                        ▼                       ▼
+             PostgreSQL                 Redis                ML Service
+               (5432)                  (6379)                 (8001)
+                                                               │
+                                    ┌──────────────────────────┼────────────────────┐
+                                    │                          │                    │
+                                    ▼                          ▼                    ▼
+                        Sentence Transformers          TF-IDF Classifier      Groq LLM
 ```
-Internet
-    ↓
-Nginx (port 80) — reverse proxy, rate limiting, SSL termination
-    ↓
-┌─────────────────┬──────────────────┐
-│ Next.js         │ FastAPI          │
-│ Frontend        │ Backend (8000)   │
-│ (port 3000)     │                  │
-└─────────────────┴──────────────────┘
-                      ↓
-          ┌───────────┼───────────┐
-          │           │           │
-       Postgres    Redis       ML Service
-       (5432)      (6379)      (8001)
-                               ↓
-                   ┌───────────┼───────────┐
-                   │           │           │
-              Sentence    Groq LLM    TF-IDF +
-           Transformers  (free tier)  Logistic Reg
-```
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Frontend | Next.js 14, TypeScript |
-| API | FastAPI, Python 3.11, SQLAlchemy |
-| Auth | JWT (access + refresh), bcrypt |
-| Cache | Redis (cache-aside, sessions, rate limiting) |
-| Database | PostgreSQL 16, Alembic migrations |
-| ML — Evaluation | Sentence Transformers (all-MiniLM-L6-v2) |
-| ML — Classification | TF-IDF + Logistic Regression |
-| ML — Feedback | Groq Llama 3.3-70B (free tier) |
-| Gateway | Nginx |
-| CI/CD | GitHub Actions (4 workflows) |
-| Containers | Docker + Docker Compose |
-
-## Quick Start
-
-### Prerequisites
-
-- Docker + Docker Compose
-- A free [Groq API key](https://console.groq.com) (takes 60 seconds)
-
-### 1. Clone and configure
-
-```bash
-git clone https://github.com/your-username/devmentor-ai.git
-cd devmentor-ai
-cp .env.example .env
-```
-
-Open `.env` and set your Groq API key:
-
-```
-GROQ_API_KEY=gsk_your_key_here
-```
-
-Generate a secure secret key:
-
-```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
-# Paste output into .env as SECRET_KEY=...
-```
-
-### 2. Start everything
-
-```bash
-docker compose up --build
-```
-
-First run downloads the Sentence Transformer model (~90MB). Subsequent starts are instant.
-
-### 3. Access
-
-| Service | URL |
-|---|---|
-| App | http://localhost |
-| API docs | http://localhost/docs |
-| Health check | http://localhost/health |
-| Prometheus metrics | http://localhost/metrics |
-
-### 4. Create your account
-
-Visit http://localhost/register — no email verification required.
 
 ---
 
-## Makefile Commands
+## Adaptive Interview Flow
 
-```bash
-make help          # Show all commands
-make setup         # First-time setup
-make dev           # Start all services (hot reload)
-make test          # Run all 171 tests
-make test-backend  # Backend tests only
-make test-ml       # ML service tests only
-make lint          # Run ruff + eslint
-make migrate       # Run database migrations
-make migrate-new msg="add column"  # Create new migration
-make health        # Check all service health
-make logs          # Tail all service logs
-make shell-backend # Shell into backend container
-make shell-db      # psql into Postgres
-make redis-cli     # Redis CLI
-make clean         # Remove all containers and volumes
-```
+1. Candidate starts an interview session.
+2. Initial questions are selected based on the chosen topic.
+3. Each answer is evaluated using semantic similarity and confidence scoring.
+4. Skill scores are updated after every response.
+5. Future questions are selected dynamically:
+
+   * Strong performance → higher difficulty
+   * Weak performance → targeted reinforcement
+6. Final reports summarize strengths, weaknesses, and learning recommendations.
+
+---
+
+## Tech Stack
+
+| Layer          | Technology                   |
+| -------------- | ---------------------------- |
+| Frontend       | Next.js, TypeScript          |
+| Backend        | FastAPI, Python 3.11         |
+| Database       | PostgreSQL                   |
+| Cache          | Redis                        |
+| Authentication | JWT, bcrypt                  |
+| ML Evaluation  | Sentence Transformers        |
+| Classification | TF-IDF + Logistic Regression |
+| LLM Feedback   | Groq Llama 3                 |
+| Containers     | Docker, Docker Compose       |
+| CI/CD          | GitHub Actions               |
+| Monitoring     | Prometheus Metrics           |
 
 ---
 
 ## Project Structure
 
-```
+```text
 devmentor-ai/
-├── backend/                    # FastAPI application
-│   ├── app/
-│   │   ├── api/v1/endpoints/   # HTTP route handlers
-│   │   │   ├── auth.py         # Register, login, refresh, logout
-│   │   │   ├── interview.py    # Session lifecycle, Q&A, scoring
-│   │   │   ├── code_review.py  # AI code review
-│   │   │   └── roadmap.py      # Skill assessments, roadmap
-│   │   ├── core/               # Cross-cutting concerns
-│   │   │   ├── config.py       # Pydantic Settings (reads .env)
-│   │   │   ├── security.py     # JWT + bcrypt
-│   │   │   ├── dependencies.py # FastAPI DI (get_current_user)
-│   │   │   ├── logging.py      # Structured JSON logging
-│   │   │   ├── metrics.py      # Prometheus counters/histograms
-│   │   │   └── middleware.py   # Observability + rate limiting
-│   │   ├── db/
-│   │   │   ├── session.py      # Async SQLAlchemy engine + pool
-│   │   │   └── redis.py        # Redis connection pool
-│   │   ├── models/             # SQLAlchemy ORM models
-│   │   ├── schemas/            # Pydantic request/response schemas
-│   │   └── services/           # Business logic layer
-│   │       ├── auth_service.py
-│   │       ├── interview_service.py  # Full session lifecycle
-│   │       ├── cache_service.py      # Redis patterns
-│   │       ├── ml_client.py          # HTTP client for ML service
-│   │       ├── health_service.py     # Liveness + readiness checks
-│   │       └── recommendation_service.py
-│   ├── alembic/                # Database migrations
-│   │   └── versions/
-│   │       └── 0001_initial_schema.py
-│   ├── tests/                  # 81 unit tests
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── pyproject.toml          # Ruff, mypy, pytest config
-│
-├── ml/                         # ML microservice (port 8001)
-│   ├── evaluator/
-│   │   └── evaluator.py        # Sentence Transformer scoring
-│   ├── classifier/
-│   │   ├── tfidf_classifier.py # TF-IDF + Logistic Regression
-│   │   └── skill_classifier.py # Groq + TF-IDF orchestration
-│   ├── llm/
-│   │   ├── groq_client.py      # Groq API with retry + JSON mode
-│   │   └── feedback_generator.py  # LLM coaching feedback
-│   ├── recommender/
-│   │   ├── catalogue.py        # 30 curated learning resources
-│   │   └── engine.py           # Content-based + Groq personalization
-│   ├── tests/                  # 90 unit tests
-│   ├── main.py                 # FastAPI ML service
-│   ├── Dockerfile
-│   └── requirements.txt
-│
-├── frontend/                   # Next.js application
-│   └── src/
-│       ├── pages/
-│       │   ├── index.tsx       # Landing page (SSG)
-│       │   ├── login.tsx       # Auth pages
-│       │   ├── register.tsx
-│       │   ├── dashboard.tsx   # Skill radar + sessions (CSR)
-│       │   ├── interview.tsx   # Interview room (CSR, real API)
-│       │   └── roadmap.tsx     # Learning roadmap (CSR)
-│       ├── hooks/
-│       │   ├── useAuth.ts      # Auth state + silent refresh
-│       │   └── useApi.ts       # Generic data fetching
-│       ├── utils/
-│       │   └── api.ts          # Typed API client
-│       └── styles/
-│           └── globals.css     # Design system (Terminal Precision)
-│
-├── nginx/
-│   ├── nginx.conf              # Reverse proxy + rate limiting
-│   └── Dockerfile
-│
-├── .github/
-│   └── workflows/
-│       ├── ci.yml              # Lint → Test → Security → Build
-│       ├── cd.yml              # Deploy staging + production
-│       ├── pr-checks.yml       # PR quality gates
-│       └── dependency-update.yml  # Weekly CVE scanning
-│
-├── docker-compose.yml          # Orchestrates all 6 services
-├── .env.example                # Environment template
-├── Makefile                    # Developer commands
+├── backend/          # FastAPI API
+├── frontend/         # Next.js application
+├── ml/               # ML services
+├── nginx/            # Reverse proxy
+├── .github/          # CI/CD workflows
+├── docker-compose.yml
 └── README.md
 ```
+
+## Quick Start
+
+### Prerequisites
+
+* Docker
+* Docker Compose
+* Groq API Key
+
+### Clone Repository
+
+```bash
+git clone https://github.com/ShivaUpman/devmentor-ai.git
+cd devmentor-ai
+cp .env.example .env
+```
+
+### Configure Environment
+
+Add your Groq API key to `.env`:
+
+```env
+GROQ_API_KEY=your_key_here
+```
+
+Generate a secure secret key:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Add the generated value to:
+
+```env
+SECRET_KEY=generated_secret_key
+```
+
+### Start Application
+
+```bash
+docker compose up --build
+```
+
+### Access Services
+
+| Service      | URL                      |
+| ------------ | ------------------------ |
+| Application  | http://localhost         |
+| API Docs     | http://localhost/docs    |
+| Health Check | http://localhost/health  |
+| Metrics      | http://localhost/metrics |
 
 ---
 
@@ -214,185 +181,202 @@ devmentor-ai/
 
 ### Authentication
 
-```
-POST /api/v1/auth/register    Create account
-POST /api/v1/auth/login       Login → access + refresh tokens
-POST /api/v1/auth/refresh     Exchange refresh token for new access token
-GET  /api/v1/auth/me          Current user profile
-POST /api/v1/auth/logout      Revoke session
+```http
+POST /api/v1/auth/register
+POST /api/v1/auth/login
+POST /api/v1/auth/refresh
+GET  /api/v1/auth/me
+POST /api/v1/auth/logout
 ```
 
 ### Interview Sessions
 
+```http
+POST /api/v1/interview/
+GET  /api/v1/interview/
+GET  /api/v1/interview/{id}
+
+GET  /api/v1/interview/{id}/questions
+POST /api/v1/interview/{id}/questions/next
+
+POST /api/v1/interview/questions/{id}/submit
+POST /api/v1/interview/{id}/complete
+
+GET  /api/v1/interview/{id}/results
 ```
-POST /api/v1/interview/                          Start session
-GET  /api/v1/interview/                          List sessions
-GET  /api/v1/interview/{id}                      Session details
-GET  /api/v1/interview/{id}/questions            Get questions
-POST /api/v1/interview/questions/{id}/submit     Submit answer (ML scored)
-POST /api/v1/interview/{id}/complete             Complete session
-POST /api/v1/interview/{id}/abandon              Abandon session
-GET  /api/v1/interview/{id}/results              Full results review
+
+### Roadmaps
+
+```http
+GET   /api/v1/roadmap/skills
+GET   /api/v1/roadmap/roadmap
+PATCH /api/v1/roadmap/roadmap/{id}
 ```
 
 ### Code Review
 
-```
-POST /api/v1/code-review/    Submit code for AI review
-```
-
-### Roadmap & Skills
-
-```
-GET   /api/v1/roadmap/skills           Skill proficiency scores
-GET   /api/v1/roadmap/roadmap          Personalized learning roadmap
-PATCH /api/v1/roadmap/roadmap/{id}     Mark resource complete
+```http
+POST /api/v1/code-review/
 ```
 
 ### Monitoring
 
-```
-GET /health          Liveness probe (no external checks)
-GET /health/ready    Readiness probe (DB + Redis + ML)
-GET /metrics         Prometheus metrics
+```http
+GET /health
+GET /health/ready
+GET /metrics
 ```
 
 ---
 
-## ML Pipeline
+## Machine Learning Pipeline
 
-### Answer Evaluation (Module 1)
+### Answer Evaluation
 
-1. Candidate answer + ideal answer → Sentence Transformer encoder
-2. 384-dimensional embeddings → cosine similarity (content score)
-3. Rule-based confidence score (length, keyword coverage, structure)
-4. Weighted combination: 70% content + 30% confidence
-5. Groq LLM generates personalized coaching feedback
+1. Candidate answer and ideal answer are encoded using Sentence Transformers.
+2. Embeddings are compared using cosine similarity.
+3. Confidence metrics are calculated.
+4. Scores are combined into a final evaluation.
+5. Groq generates personalized coaching feedback.
 
-### Skill Classification (Module 2)
+### Skill Classification
 
-1. Question text → TF-IDF vectorizer (5000 features, bigrams)
-2. Logistic Regression classifies into: DSA / OS / DBMS / CN / OOP / System Design
-3. If confidence < 70%: escalates to Groq Llama 3.3-70B for higher accuracy
-4. Circuit breaker: Groq failure → TF-IDF fallback always available
+1. Question text is vectorized using TF-IDF.
+2. Logistic Regression predicts the topic:
 
-### Recommendation Engine (Module 3)
+   * DSA
+   * Operating Systems
+   * DBMS
+   * Computer Networks
+   * OOP
+   * System Design
+3. Low-confidence predictions can be escalated to Groq for validation.
 
-1. Skill scores → gap analysis (1.0 - proficiency, sorted by urgency)
-2. Content-based filtering: match weak topics to curated 30-resource catalogue
-3. Difficulty routing: score 0.0–0.35 → beginner, 0.35–0.60 → intermediate
-4. Groq personalizes ordering with prerequisite reasoning and study schedule
+### Recommendation Engine
+
+1. Skill scores identify knowledge gaps.
+2. Resources are matched to weak topics.
+3. Recommendations are ranked by relevance and difficulty.
+4. Learning roadmaps are generated.
 
 ---
 
-## CI/CD Pipeline
+## Testing
 
+Run all tests:
+
+```bash
+make test
 ```
-Push to any branch
-    ↓
-┌──────────────┬────────────────┬──────────────────┐
-│ Lint         │ Test           │ Security         │
-│ ruff, eslint │ pytest (171)   │ bandit, pip-audit│
-│ mypy, tsc    │ coverage ≥ 80% │ secret scanning  │
-└──────────────┴────────────────┴──────────────────┘
-    ↓ (all pass, push to main)
-Docker build → tag with git SHA → push to ghcr.io
-    ↓
-Deploy to staging (auto)
-    ↓ (tag v*.*.*)
-Deploy to production (manual release)
+
+Backend tests:
+
+```bash
+make test-backend
+```
+
+ML service tests:
+
+```bash
+make test-ml
+```
+
+Linting:
+
+```bash
+make lint
+```
+
+Health checks:
+
+```bash
+make health
+```
+
+---
+
+## Development Commands
+
+```bash
+make help
+make setup
+make dev
+make test
+make lint
+make migrate
+make logs
+make clean
+```
+
+---
+
+## Deployment
+
+### Local Development
+
+```bash
+make setup
+make dev
+```
+
+### Production Deployment
+
+```bash
+git clone https://github.com/<your-username>/devmentor-ai.git
+
+cd devmentor-ai
+
+cp .env.example .env
+
+docker compose up -d
+
+docker compose exec backend alembic upgrade head
 ```
 
 ---
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `SECRET_KEY` | ✓ | — | JWT signing key (32+ random bytes) |
-| `GROQ_API_KEY` | ✓ | — | Free key from console.groq.com |
-| `GROQ_MODEL` | | llama-3.3-70b-versatile | Groq model to use |
-| `DATABASE_URL` | | postgres://devmentor:... | Async PostgreSQL DSN |
-| `REDIS_URL` | | redis://redis:6379/0 | Redis connection URL |
-| `ENVIRONMENT` | | development | development / production |
-| `RATE_LIMIT_PER_MINUTE` | | 60 | Requests per minute per IP |
+| Variable              | Description                  |
+| --------------------- | ---------------------------- |
+| SECRET_KEY            | JWT signing key              |
+| GROQ_API_KEY          | Groq API key                 |
+| GROQ_MODEL            | Model name                   |
+| DATABASE_URL          | PostgreSQL connection string |
+| REDIS_URL             | Redis connection string      |
+| ENVIRONMENT           | development or production    |
+| RATE_LIMIT_PER_MINUTE | API rate limit               |
 
 ---
 
-## Test Coverage
+## Key Engineering Concepts
 
-```
-Backend (81 tests):
-  test_auth.py              — JWT, bcrypt, register/login flow
-  test_cache.py             — Redis patterns, TTL, sessions, denylist
-  test_interview_service.py — Session lifecycle, ML scoring, EMA skill assessment
-  test_observability.py     — Structured logging, Prometheus metrics, health checks
-
-ML Service (90 tests):
-  test_evaluator.py         — Cosine similarity, confidence scoring, grade assignment
-  test_classifier.py        — TF-IDF training, Groq integration, circuit breaker
-  test_recommender.py       — Gap computation, resource selection, Groq personalization
-```
-
-Run all tests: `make test`
+* Adaptive assessment systems
+* Semantic answer evaluation
+* Recommendation engines
+* JWT authentication
+* Redis caching
+* Dockerized microservices
+* FastAPI backend architecture
+* CI/CD pipelines
+* ML-powered feedback generation
 
 ---
 
-## Deployment
+## Future Improvements
 
-### Local development
-
-```bash
-make setup   # One-time setup
-make dev     # Start with hot reload
-```
-
-### Production (VPS / cloud VM)
-
-```bash
-# On your server
-git clone https://github.com/your-username/devmentor-ai.git
-cd devmentor-ai
-cp .env.example .env
-# Edit .env with production values and a strong SECRET_KEY
-
-docker compose -f docker-compose.yml up -d
-docker compose exec backend alembic upgrade head
-```
-
-For HTTPS, add Certbot/Let's Encrypt and update `nginx.conf` to listen on 443.
-
-### GitHub Actions CD
-
-Set these secrets in your repository (Settings → Secrets):
-
-```
-SECRET_KEY
-GROQ_API_KEY
-STAGING_HOST
-STAGING_USER
-STAGING_SSH_KEY
-PRODUCTION_HOST
-PRODUCTION_USER
-PRODUCTION_SSH_KEY
-```
-
-Push a tag to deploy to production: `git tag v1.0.0 && git push --tags`
+* Voice-based interview sessions
+* Real-time analytics dashboard
+* Multi-language interview support
+* Team and recruiter dashboards
+* Advanced skill progression tracking
 
 ---
 
-## Resume Impact
+## License
 
-This project demonstrates:
-
-- **Distributed systems design** — 6 containerized services with defined network boundaries
-- **ML engineering** — Sentence Transformers, TF-IDF, cosine similarity, LLM orchestration
-- **Production backend** — Async FastAPI, SQLAlchemy, Alembic migrations, JWT auth
-- **Caching architecture** — Cache-aside pattern, write-invalidate, TTL selection
-- **Observability** — Structured logging, Prometheus metrics, liveness/readiness probes
-- **CI/CD** — GitHub Actions with quality gates, coverage enforcement, Docker SHA tagging
-- **Security** — bcrypt, JWT, rate limiting, SQL injection prevention, non-root containers
+This project is licensed under the MIT License.
 
 ---
 
-*Built as a portfolio project demonstrating full-stack engineering, ML integration, and production operations.*
+Built to help developers practice interviews, identify skill gaps, and follow structured learning paths through adaptive assessment and AI-generated feedback.
