@@ -205,6 +205,12 @@ class RecommendationEngine:
 
         # Sort by relevance score descending
         scored.sort(key=lambda x: x[0], reverse=True)
+
+        if target_difficulty == "advanced":
+            advanced = [r for _, r in scored if r.difficulty == "advanced"]
+            if advanced:
+                return advanced[:n]
+
         return [r for _, r in scored[:n]]
 
     def _algorithm_only_roadmap(
