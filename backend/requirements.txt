@@ -45,3 +45,5 @@ python-multipart==0.0.9
 # ── Dev / Test ─────────────────────────────────────────────────────────────────
 pytest==8.2.0
 pytest-asyncio==0.23.6
+# Coverage plugin for pytest (used by GitHub Actions)
+pytest-cov==5.0.0
