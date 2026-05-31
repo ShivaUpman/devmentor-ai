@@ -1,0 +1,24 @@
+# ── ML Service Dependencies ────────────────────────────────────────────────────
+#
+# WHY torch with --index-url for CPU?
+#   Default torch from PyPI includes CUDA binaries (~2.5GB).
+#   The CPU-only version is ~200MB. We don't have a GPU, so we force CPU.
+#   In requirements.txt we note this — the actual install flag goes in Dockerfile.
+#
+# Note: When installing locally, use:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# FastAPI to expose ML endpoints
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+
+# The core ML libraries
+sentence-transformers==3.0.1
+scikit-learn==1.5.0
+numpy==1.26.4
+
+# For TF-IDF classifier
+joblib==1.4.2
+
+# Groq LLM API — free tier, llama-3.3-70b-versatile
+groq==1.4.0

@@ -1,0 +1,174 @@
+# docker-compose.yml — DevMentor AI full stack
+#
+# WHY Docker Compose?
+#   Running 5+ services manually is chaos. Docker Compose defines the entire
+#   system in one YAML file. One command (docker compose up) starts everything.
+#
+# Interview questions:
+#   "What is the difference between Docker and Docker Compose?"
+#     Docker: manages individual containers.
+#     Docker Compose: manages MULTIPLE containers as a system.
+#
+#   "How do containers communicate with each other in Docker Compose?"
+#     They use the service name as a hostname. "backend" resolves to the
+#     backend container's IP via Docker's built-in DNS. No IP addresses needed.
+#
+#   "What happens to database data when you run docker compose down?"
+#     Without volumes: data is destroyed. With named volumes: data persists.
+#     This is why postgres uses a named volume.
+
+# ── Networks ───────────────────────────────────────────────────────────────────
+# WHY a custom network?
+#   Default Docker networking puts all containers on the same network.
+#   Custom networks let you isolate services. Here, the DB is only reachable
+#   from the backend — not from Nginx or the outside world.
+networks:
+  frontend_net:    # Nginx ↔ Frontend ↔ Backend
+  backend_net:     # Backend ↔ PostgreSQL ↔ Redis ↔ ML
+
+# ── Volumes ────────────────────────────────────────────────────────────────────
+# WHY named volumes for postgres and redis?
+#   Containers are ephemeral — their filesystem is destroyed on removal.
+#   Named volumes live outside the container lifecycle. Your data survives
+#   docker compose down and docker compose up.
+#
+#   Bind mount (./data:/var/lib/postgresql) vs Named volume (postgres_data:)
+#     Bind mount: maps a host directory. Good for code (you edit, container sees it).
+#     Named volume: Docker manages it. Better for databases — no permission issues.
+volumes:
+  postgres_data:
+  redis_data:
+
+# ── Services ───────────────────────────────────────────────────────────────────
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: devmentor_postgres
+    environment:
+      POSTGRES_USER: devmentor
+      POSTGRES_PASSWORD: devmentor       # NEVER do this in production. Use secrets.
+      POSTGRES_DB: devmentor
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Optional: run init SQL on first startup
+      # - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - backend_net
+    # WHY not expose port 5432 publicly?
+    #   The DB should NEVER be reachable from the internet.
+    #   Other services reach it via Docker DNS: "postgres:5432"
+    #   If you need to connect locally (e.g. for psql), use:
+    #     ports: ["5432:5432"]  — but only in development
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devmentor -d devmentor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: devmentor_redis
+    # WHY --appendonly yes?
+    #   Redis is an in-memory database — it loses all data on restart by default.
+    #   --appendonly yes writes every operation to disk (AOF persistence).
+    #   On restart, Redis replays the log and recovers all data.
+    #   Trade-off: slightly slower writes. Acceptable for our use case.
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # maxmemory-policy allkeys-lru:
+    #   When Redis hits 256MB, it evicts the Least Recently Used keys.
+    #   Interview question: "What are Redis eviction policies?"
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Backend (FastAPI) ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: devmentor_backend
+    # WHY env_file instead of environment: block?
+    #   env_file reads from .env file. You can gitignore .env and keep secrets out
+    #   of the repository. The environment: block would expose secrets in this file.
+    env_file:
+      - .env
+    volumes:
+      # WHY bind-mount the source code?
+      #   This is the dev-mode trick: mounting ./backend/app into the container
+      #   means code changes on your host are immediately visible in the container.
+      #   Combined with uvicorn --reload, you get hot-reload without rebuilding.
+      #   In production, remove this mount — code is baked into the image.
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+    depends_on:
+      postgres:
+        condition: service_healthy   # Wait for postgres to be ready, not just running
+      redis:
+        condition: service_healthy
+    networks:
+      - frontend_net
+      - backend_net
+    restart: unless-stopped
+
+
+  # ── ML Service ───────────────────────────────────────────────────────────────
+  ml:
+    build:
+      context: ./ml
+      dockerfile: Dockerfile
+    container_name: devmentor_ml
+    env_file:
+      - .env
+    volumes:
+      - ./ml:/app
+    networks:
+      - backend_net
+    restart: unless-stopped
+
+  # ── Frontend (Next.js) ───────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: devmentor_frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost/api   # Nginx URL — public
+      - NODE_ENV=development
+    volumes:
+      - ./frontend/src:/app/src                    # Hot reload
+    depends_on:
+      - backend
+    networks:
+      - frontend_net
+    restart: unless-stopped
+
+  # ── Nginx (reverse proxy) ────────────────────────────────────────────────────
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: devmentor_nginx
+    ports:
+      # WHY only Nginx exposes a port?
+      #   Nginx is the ONLY entry point from the outside world.
+      #   All other services are unreachable from your host machine by design.
+      #   This is the "defense in depth" principle.
+      - "80:80"
+      # For HTTPS later: - "443:443"
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - frontend_net
+    restart: unless-stopped

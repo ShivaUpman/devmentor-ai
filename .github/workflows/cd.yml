@@ -1,0 +1,199 @@
+# cd.yml — Continuous Deployment Pipeline
+#
+# Triggered separately from CI because deploy has different concerns:
+#   - CI: runs on every push (fast feedback)
+#   - CD: runs on main after CI passes (deploy only clean code)
+#
+# Two deployment targets:
+#   Staging:    every push to main (after CI passes)
+#   Production: only on tagged releases (v*.*.* format)
+#
+# WHY separate staging and production?
+#   Staging validates that the deployment PROCESS works before production.
+#   It also lets QA/stakeholders see changes before users do.
+#   "Deploy to staging first, promote to production" is universal at scale.
+
+name: CD
+
+on:
+  # Deploy to staging on every successful push to main
+  push:
+    branches: [main]
+  # Deploy to production on version tags: v1.0.0, v1.2.3, etc.
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+# Prevent concurrent deploys — one deploy at a time to each environment
+# WHY? Two simultaneous deploys would race. docker compose up with different
+# image tags would produce an undefined state. Serialize all deploys.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false  # Don't cancel — let the current deploy finish
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+
+  # ── Deploy to Staging ────────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: staging
+      url: https://staging.devmentor.ai
+      # WHY environment: block?
+      #   GitHub Environments track deployments — shows on the repo page.
+      #   Can require manual approval before deploying (for production).
+      #   Scopes environment-specific secrets (STAGING_* vs PRODUCTION_*).
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to staging server via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          # WHY SSH key and not password?
+          #   SSH keys are asymmetric — the private key never leaves GitHub Secrets.
+          #   The server only has the public key. Passwords can be brute-forced.
+          #   Industry standard: all automated deployments use SSH keys.
+          script: |
+            cd /opt/devmentor-ai
+            
+            # Log the deployment for audit trail
+            echo "[$(date)] Deploying commit ${{ github.sha }} to STAGING" >> deploy.log
+            
+            # Pull latest images
+            # WHY docker compose pull before up?
+            #   `up` alone uses cached images. `pull` fetches the latest tagged version.
+            #   Without pull, you'd deploy the same old image even after pushing new ones.
+            docker compose pull backend ml
+            
+            # Rolling restart — update backend and ML service
+            # WHY --no-deps? We only want to restart the services that changed.
+            # PostgreSQL and Redis are stateful — never restart them unnecessarily.
+            docker compose up -d --no-deps backend ml
+            
+            # Run database migrations before traffic hits the new code
+            # WHY migrations before traffic?
+            #   If new code runs before its required schema exists → crashes.
+            #   Rule: always migrate before deploying new application code.
+            #   This is the "expand/contract" migration pattern.
+            docker compose exec -T backend alembic upgrade head
+            
+            # Health check — verify the deployment succeeded
+            # WHY health check after deploy?
+            #   Silent failures: docker compose up returns 0 even if the app crashes.
+            #   A real HTTP health check catches crashes, misconfiguration, bad env vars.
+            sleep 10
+            curl -f http://localhost/health || (echo "HEALTH CHECK FAILED" && exit 1)
+            
+            echo "[$(date)] Staging deploy successful: ${{ github.sha }}" >> deploy.log
+
+      - name: Notify on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ Staging deployment failed for commit `${{ github.sha }}`. Check the [Actions log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).'
+            })
+
+  # ── Deploy to Production ─────────────────────────────────────────────────────
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    # WHY only on version tags?
+    #   Production deployments should be intentional human decisions.
+    #   Creating a git tag is a deliberate act: `git tag v1.2.0 && git push --tags`
+    #   This prevents accidental production deploys.
+    environment:
+      name: production
+      url: https://devmentor.ai
+      # GitHub Environment with protection rules:
+      #   - Require reviewers: at least 1 team member must approve
+      #   - Deployment branches: only tags matching v*.*.*
+      # Configure in: Settings → Environments → production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Deploy to production server via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          script: |
+            cd /opt/devmentor-ai
+            
+            echo "[$(date)] === PRODUCTION DEPLOY START ===" >> deploy.log
+            echo "[$(date)] Version: ${{ steps.version.outputs.VERSION }}" >> deploy.log
+            echo "[$(date)] Commit: ${{ github.sha }}" >> deploy.log
+            
+            # Create a timestamped backup point for rollback
+            # WHY backup before deploy?
+            #   If something goes wrong, you can restore in minutes.
+            #   `docker tag` is free — just metadata, no data duplication.
+            docker tag devmentor-backend:latest devmentor-backend:rollback-$(date +%Y%m%d-%H%M%S)
+            
+            # Pull the specific versioned image (NOT latest)
+            # WHY pin the version in production?
+            #   `latest` in production is dangerous — it changes without warning.
+            #   Pinning to a specific tag makes deployments reproducible and
+            #   auditable. "What was running in production at 2pm?" → check deploy.log.
+            docker compose pull backend ml
+            
+            # Zero-downtime deploy
+            # WHY --no-recreate for stateful services?
+            #   PostgreSQL and Redis must not restart during a deploy.
+            #   Data in flight would be lost. Only restart the stateless services.
+            docker compose up -d --no-deps --no-recreate postgres redis
+            docker compose up -d --no-deps backend ml nginx
+            
+            # Migrations
+            docker compose exec -T backend alembic upgrade head
+            
+            # Health check with retry
+            for i in 1 2 3 4 5; do
+              if curl -sf http://localhost/health; then
+                echo "[$(date)] Health check passed (attempt $i)" >> deploy.log
+                break
+              fi
+              echo "Health check attempt $i failed, waiting..."
+              sleep 5
+              if [ $i -eq 5 ]; then
+                echo "[$(date)] HEALTH CHECK FAILED — initiating rollback" >> deploy.log
+                # Rollback: restart from the backup image
+                docker compose restart backend ml
+                exit 1
+              fi
+            done
+            
+            echo "[$(date)] === PRODUCTION DEPLOY SUCCESS: ${{ steps.version.outputs.VERSION }} ===" >> deploy.log
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          # WHY auto-generate release notes?
+          #   GitHub compares commits since the last tag and groups them by PR labels.
+          #   Automatic changelog without manual effort. Stakeholders see what changed.

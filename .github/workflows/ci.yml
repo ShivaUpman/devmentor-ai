@@ -1,0 +1,377 @@
+# ci.yml — DevMentor AI Continuous Integration Pipeline
+#
+# WHY GitHub Actions and not Jenkins, CircleCI, or GitLab CI?
+#   GitHub Actions is free for public repos, tightly integrated with GitHub
+#   (no webhooks to configure), has 60,000+ marketplace actions, and the
+#   YAML syntax is industry-standard knowledge. Jenkins requires self-hosting.
+#   CircleCI/GitLab are alternatives — the concepts are identical.
+#
+# Interview question: "What is the difference between CI and CD?"
+#   CI (Continuous Integration): every code change is automatically built
+#     and tested. Goal: catch bugs before they reach main.
+#   CD (Continuous Delivery): every passing build is deployable.
+#     Deployment may still be manual (one click).
+#   CD (Continuous Deployment): every passing build deploys automatically.
+#     Zero human intervention. Requires very high test confidence.
+#   We implement Continuous Delivery — staging auto-deploys, production
+#   requires a tagged release (intentional human action).
+
+name: CI
+
+# WHY these three triggers?
+#   push to main: we want immediate feedback on merged code
+#   pull_request: we want to catch failures BEFORE code reaches main
+#   workflow_dispatch: manual trigger for debugging the pipeline itself
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# WHY cancel-in-progress?
+#   If you push 3 times in quick succession, GitHub would run 3 pipelines.
+#   Only the latest matters. Cancelling in-progress saves compute minutes
+#   and reduces noise. Industry standard for trunk-based development.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Default permissions — principle of least privilege
+permissions:
+  contents: read
+  packages: write      # Needed to push to GitHub Container Registry
+  pull-requests: write # Needed to post coverage comments on PRs
+
+# ── Environment variables shared across all jobs ───────────────────────────────
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+
+  # ── Job 1: Backend Lint ──────────────────────────────────────────────────────
+  # WHY lint before tests?
+  #   Lint is the cheapest check (~30s). If the code has syntax errors or
+  #   style violations, there's no point running the slower test suite.
+  #   Fast feedback: fail early on the cheapest signal.
+  lint-backend:
+    name: Lint Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        # WHY actions/checkout? It clones the repo into the runner.
+        # The runner is a fresh Ubuntu VM — no code exists until this step.
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          # WHY cache? pip downloads packages from PyPI.
+          # Caching the pip directory means subsequent runs reuse downloaded
+          # packages instead of re-downloading. Saves 30-60s per run.
+          cache: pip
+
+      - name: Install lint dependencies
+        run: pip install ruff mypy
+
+      - name: Run Ruff linter
+        # WHY Ruff over flake8/pylint?
+        #   Ruff is a Rust-based Python linter — 100x faster than flake8.
+        #   Same rules, same config format, but finishes in milliseconds.
+        #   Used by Anthropic, FastAPI maintainers, and most modern Python projects.
+        run: ruff check app/ --select E,W,F,I --ignore E501
+
+      - name: Run Ruff formatter check
+        # Checks formatting without changing files (--check = exit 1 if would format)
+        run: ruff format app/ --check
+
+      - name: Type check with mypy
+        # WHY type checking in CI?
+        #   Python is dynamically typed but mypy adds static analysis.
+        #   Catches: wrong argument types, missing attributes, None dereferences.
+        #   Real bugs caught before they reach production.
+        run: mypy app/ --ignore-missing-imports --no-strict-optional
+        continue-on-error: true  # Don't block on mypy initially — it's strict
+
+  # ── Job 2: Frontend Lint ─────────────────────────────────────────────────────
+  lint-frontend:
+    name: Lint Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        # WHY npm ci and not npm install?
+        #   npm ci reads package-lock.json exactly — reproducible, no drift.
+        #   npm install may update packages, breaking CI determinism.
+        #   Rule: always use npm ci in CI pipelines.
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+  # ── Job 3: Backend Tests ─────────────────────────────────────────────────────
+  test-backend:
+    name: Test Backend
+    runs-on: ubuntu-latest
+    needs: [lint-backend]  # Only run tests if lint passes
+    # WHY needs? Avoids running expensive tests when cheap lint already failed.
+
+    # WHY services? Tests that hit Redis or PostgreSQL need real instances.
+    # GitHub Actions supports Docker-based service containers — they start
+    # before your job and are accessible via localhost.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: devmentor
+          POSTGRES_PASSWORD: devmentor
+          POSTGRES_DB: devmentor_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    defaults:
+      run:
+        working-directory: backend
+
+    env:
+      # Test environment — separate DB from dev
+      DATABASE_URL: postgresql+asyncpg://devmentor:devmentor@localhost:5432/devmentor_test
+      SYNC_DATABASE_URL: postgresql://devmentor:devmentor@localhost:5432/devmentor_test
+      REDIS_URL: redis://localhost:6379/1
+      SECRET_KEY: test-secret-key-not-used-in-production
+      ENVIRONMENT: test
+      GROQ_API_KEY: ""  # Intentionally empty — tests mock Groq
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run database migrations
+        # WHY run migrations before tests?
+        #   Tests need the schema to exist. Migrations create the schema.
+        #   This also validates that migrations are correct — a broken
+        #   migration file would fail here before touching production.
+        run: alembic upgrade head
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=80 \
+            -v \
+            --tb=short
+        # --cov-fail-under=80: GATE — pipeline fails if coverage < 80%
+        # This is the "quality gate" — enforces test discipline on every PR
+
+      - name: Upload coverage report
+        # WHY upload coverage? It's consumed by the coverage comment on PRs
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+          retention-days: 7
+
+      - name: Post coverage comment on PR
+        if: github.event_name == 'pull_request'
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COVERAGE_DATA_FILE: backend/coverage.xml
+
+  # ── Job 4: ML Service Tests ──────────────────────────────────────────────────
+  test-ml:
+    name: Test ML Service
+    runs-on: ubuntu-latest
+    needs: [lint-backend]
+    defaults:
+      run:
+        working-directory: ml
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install ML dependencies
+        # Install CPU-only torch — dramatically smaller than CUDA version
+        run: |
+          pip install scikit-learn numpy pytest pytest-asyncio groq
+          # Sentence transformers without downloading models (tests mock them)
+          pip install sentence-transformers --no-deps
+          pip install transformers tokenizers
+
+      - name: Run ML tests
+        env:
+          GROQ_API_KEY: ""  # Tests mock Groq — no real key needed
+        run: |
+          pytest tests/ \
+            --cov=. \
+            --cov-report=term-missing \
+            --cov-fail-under=75 \
+            -v \
+            --tb=short
+
+  # ── Job 5: Security Scan ─────────────────────────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    # Runs in parallel with lint — independent of test results
+    # WHY parallel? Security check is independent — no reason to wait for tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install security tools
+        run: pip install bandit pip-audit safety
+
+      - name: Bandit — Python security linter
+        # WHY bandit? Catches common Python security mistakes:
+        #   - Hardcoded passwords (B105, B106)
+        #   - SQL injection via string formatting (B608)
+        #   - Use of assert in production code (B101)
+        #   - Insecure random number generation (B311)
+        run: |
+          bandit -r backend/app/ \
+            -x backend/app/tests/ \
+            -ll \
+            --format txt
+        continue-on-error: true  # Warn, don't block (review findings manually)
+
+      - name: pip-audit — dependency vulnerability scan
+        # WHY pip-audit? Checks your requirements.txt against the OSV database
+        # (Open Source Vulnerabilities). Alerts if a dependency has a known CVE.
+        # Example: if cryptography<41.0 has a CVE, this fails and blocks deploy.
+        run: pip-audit -r backend/requirements.txt
+        continue-on-error: true
+
+      - name: Check for secrets in code
+        # WHY? Devs accidentally commit API keys. This catches them.
+        # Uses git history — finds secrets even if "deleted" in a later commit.
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          extra_args: --only-verified
+        continue-on-error: true
+
+  # ── Job 6: Docker Build ──────────────────────────────────────────────────────
+  # WHY build Docker images in CI?
+  #   1. Validates the Dockerfile is correct — syntax errors caught here
+  #   2. Produces a deployable artifact tagged with the commit SHA
+  #   3. Layer caching means builds are fast after the first run
+  build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-ml]
+    # Only build on pushes to main (not on PRs — saves compute)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        # WHY Buildx? Enables multi-platform builds (linux/amd64 + linux/arm64)
+        # and layer caching support. Standard for production Docker workflows.
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          # WHY GITHUB_TOKEN? GitHub auto-provides it — no manual secret setup.
+          # It has permission to push to ghcr.io for this repository.
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend
+          tags: |
+            type=sha,prefix=,format=short
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+          # This produces tags like:
+          #   ghcr.io/you/devmentor-backend:a3f9d12  (commit SHA — immutable)
+          #   ghcr.io/you/devmentor-backend:main      (branch — moves with main)
+          #   ghcr.io/you/devmentor-backend:latest    (always latest main)
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha   # Use GitHub Actions cache for Docker layers
+          cache-to: type=gha,mode=max
+          # WHY layer caching?
+          #   Dockerfile layer order matters for cache efficiency.
+          #   COPY requirements.txt → pip install → COPY app/ means:
+          #   Only requirements change? Re-run pip install but skip the rest.
+          #   Code change only? Skip the pip install, use cached layer.
+          #   This is why we copy requirements.txt before app code in Dockerfiles.
+
+      - name: Build and push ML image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ml
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-ml:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

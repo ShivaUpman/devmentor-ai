@@ -1,0 +1,26 @@
+# CODEOWNERS — Defines who must review changes to specific files
+#
+# WHY CODEOWNERS?
+#   Automatically requests reviews from the right person.
+#   Prevents: ML engineer accidentally merging a breaking API change.
+#   Enforces: schema changes require DB approval, auth changes need security review.
+#
+# Format: path  @github-username or @org/team
+# Rules are evaluated top to bottom — last match wins.
+
+# Default: all changes need approval
+*                   @your-github-username
+
+# Database migrations require careful review
+backend/alembic/    @your-github-username
+
+# Auth code is security-critical — always review carefully
+backend/app/core/security.py   @your-github-username
+backend/app/core/dependencies.py @your-github-username
+
+# ML models need ML review
+ml/                 @your-github-username
+
+# CI/CD changes affect the whole team
+.github/            @your-github-username
+docker-compose.yml  @your-github-username

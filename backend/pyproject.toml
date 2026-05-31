@@ -1,0 +1,64 @@
+# pyproject.toml — Python project configuration
+#
+# WHY pyproject.toml and not setup.cfg or tox.ini?
+#   PEP 517/518 standard. All modern Python tools read from here.
+#   One file instead of multiple: setup.py, .flake8, mypy.ini, pytest.ini.
+#   Ruff, mypy, pytest, and black all support pyproject.toml natively.
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import ordering)
+    "B",   # flake8-bugbear (common bugs)
+    "C4",  # flake8-comprehensions (better list/dict comprehensions)
+    "UP",  # pyupgrade (use modern Python syntax)
+]
+ignore = [
+    "E501",  # line too long — handled by formatter
+    "B008",  # function calls in default arguments (FastAPI uses this)
+    "B904",  # raise from inside except (sometimes intentional)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401", "F811"]  # unused imports and redefinitions OK in tests
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+no_strict_optional = true
+warn_return_any = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "tests/*",
+    "alembic/*",
+    "app/db/session.py",  # Mostly boilerplate, hard to unit test without a real DB
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]

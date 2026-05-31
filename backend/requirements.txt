@@ -1,0 +1,47 @@
+# ── Web framework ──────────────────────────────────────────────────────────────
+# FastAPI: async Python web framework. Fastest Python framework available.
+# Pydantic v2 built-in for request/response validation.
+fastapi==0.111.0
+
+# ASGI server — runs FastAPI. Production-grade, used by Uber, Encode.
+uvicorn[standard]==0.30.1
+
+# ── Database ───────────────────────────────────────────────────────────────────
+# SQLAlchemy: Python ORM. Translates Python objects ↔ SQL tables.
+sqlalchemy==2.0.30
+
+# Async PostgreSQL driver. "asyncpg" is 3x faster than psycopg2 for async code.
+asyncpg==0.29.0
+
+# Alembic: database migration tool. Like git for your database schema.
+alembic==1.13.1
+
+# Sync driver needed for Alembic (it doesn't support asyncpg directly)
+psycopg2-binary==2.9.9
+
+# ── Auth & Security ────────────────────────────────────────────────────────────
+# JWT token creation and validation
+python-jose[cryptography]==3.3.0
+
+# Password hashing — bcrypt algorithm. NEVER store plain passwords.
+passlib[bcrypt]==1.7.4
+# passlib 1.7.4 expects bcrypt's legacy version metadata.
+bcrypt==4.0.1
+
+# ── Redis ──────────────────────────────────────────────────────────────────────
+# Async Redis client for caching, sessions, rate limiting
+redis[hiredis]==5.0.4
+
+# ── Validation & Utils ─────────────────────────────────────────────────────────
+# Pydantic settings: reads .env files into typed Python objects
+pydantic-settings==2.2.1
+
+# HTTP client for calling ML service from backend
+httpx==0.27.0
+
+# File upload support
+python-multipart==0.0.9
+
+# ── Dev / Test ─────────────────────────────────────────────────────────────────
+pytest==8.2.0
+pytest-asyncio==0.23.6

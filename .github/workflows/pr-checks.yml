@@ -1,0 +1,142 @@
+# pr-checks.yml — Pull Request quality gates
+#
+# Runs on every PR — enforces standards before code reaches main.
+# These are the rules that make code review conversations about logic,
+# not formatting or test coverage.
+
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+
+  pr-title:
+    name: Validate PR Title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # WHY enforce conventional commit format on PR titles?
+          #   PR titles become commit messages when squash-merging.
+          #   Conventional commits enable: automatic changelogs, semantic versioning,
+          #   and filtering git history by type.
+          #   Format: type(scope): description
+          #   Examples:
+          #     feat(auth): add refresh token rotation
+          #     fix(ml): handle empty answer text
+          #     docs(readme): update setup instructions
+          #     chore(deps): bump fastapi to 0.112.0
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            chore
+            ci
+
+  size-check:
+    name: PR Size Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check PR size
+        run: |
+          # Count changed lines (excluding generated files and migrations)
+          CHANGED=$(git diff --stat origin/main...HEAD \
+            -- ':!*.lock' ':!alembic/versions/*' ':!*.min.*' \
+            | tail -1 | awk '{print $4}')
+
+          echo "Changed lines: $CHANGED"
+
+          # WHY limit PR size?
+          #   Research shows: PRs > 400 lines get rubber-stamped, not reviewed.
+          #   Large PRs hide bugs. Small PRs get real feedback.
+          #   Rule at Google, Uber, Netflix: < 400 lines changed per PR.
+          if [ "${CHANGED:-0}" -gt 800 ]; then
+            echo "::warning::This PR changes ${CHANGED} lines. Consider splitting into smaller PRs for better reviewability."
+          fi
+
+  docker-build-check:
+    name: Verify Docker Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [backend, ml, nginx]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify ${{ matrix.service }} Dockerfile builds
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ matrix.service }}
+          push: false  # Build only — don't push (no registry access on PRs)
+          tags: devmentor-${{ matrix.service }}:pr-check
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # WHY build in CI even without pushing?
+          #   Validates the Dockerfile syntax, all COPY paths exist, and
+          #   pip install succeeds. Catches broken Dockerfiles before merge.
+
+  migration-check:
+    name: Verify Migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: devmentor
+          POSTGRES_PASSWORD: devmentor
+          POSTGRES_DB: devmentor_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Alembic
+        run: pip install alembic sqlalchemy psycopg2-binary pydantic-settings asyncpg
+
+      - name: Test upgrade migrations
+        # WHY test up AND down?
+        #   Proves the migration is reversible — critical for rollback capability.
+        #   If downgrade is broken, you're stuck with a bad schema in production.
+        env:
+          SYNC_DATABASE_URL: postgresql://devmentor:devmentor@localhost:5432/devmentor_test
+        working-directory: backend
+        run: |
+          alembic upgrade head
+          echo "Upgrade: OK"
+          alembic downgrade base
+          echo "Downgrade: OK"
+          alembic upgrade head
+          echo "Re-upgrade after downgrade: OK"
