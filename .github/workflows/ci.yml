@@ -183,8 +183,10 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install ML dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest-cov
 
       - name: Run database migrations
         # WHY run migrations before tests?
